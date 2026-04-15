@@ -159,7 +159,7 @@ module Herb
       rescue StandardError
         tmp.close!
       end
-    rescue StandardError
+    rescue StandardError, SyntaxError
       # ISeq compilation may fail for some generated code; source cache still works
     end
 
