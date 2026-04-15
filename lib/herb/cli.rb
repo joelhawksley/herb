@@ -102,6 +102,9 @@ class Herb::CLI
         bundle exec herb playground [file]    Open the content of the source file in the playground
         bundle exec herb version              Prints the versions of the Herb gem and the libherb library.
 
+        bundle exec herb cache:precompile     Precompile all templates to cache
+        bundle exec herb cache:clear          Clear the compilation cache
+
         bundle exec herb lint [patterns]      Lint templates (delegates to @herb-tools/linter)
         bundle exec herb format [patterns]    Format templates (delegates to @herb-tools/formatter)
         bundle exec herb highlight [file]     Syntax highlight templates (delegates to @herb-tools/highlighter)
@@ -211,6 +214,10 @@ class Herb::CLI
                   help
                 when "version"
                   print_version
+                when "cache:precompile"
+                  cache_precompile
+                when "cache:clear"
+                  cache_clear
                 when String
                   puts "Unknown command: '#{@command}'"
                   puts
@@ -710,6 +717,64 @@ class Herb::CLI
 
   def print_version
     puts Herb.version
+    exit(0)
+  end
+
+  def cache_precompile
+    require_relative "engine"
+
+    cache = Herb.cache
+    config = Herb.configuration
+    search_path = @file || config.project_root || "."
+
+    files = config.find_files(search_path)
+
+    if files.empty?
+      puts "No template files found."
+      exit(0)
+    end
+
+    # Force cache on for precompile regardless of config
+    ENV["HERB_CACHE"] = "1"
+
+    compiled = 0
+    errors = 0
+    start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    files.each do |file|
+      template = File.read(file)
+
+      begin
+        Herb::Engine.new(template, filename: file)
+        compiled += 1
+      rescue StandardError => e
+        errors += 1
+        puts "  Error: #{file}: #{e.message.lines.first&.chomp}" unless silent
+      end
+    end
+
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
+
+    unless silent
+      puts "Precompiled #{compiled} templates in #{format("%.2f", elapsed)}s"
+      puts "  Cache directory: #{cache.directory}"
+      puts "  Cache entries: #{cache.size}"
+      puts "  Errors: #{errors}" if errors > 0
+    end
+
+    exit(errors > 0 ? 1 : 0)
+  end
+
+  def cache_clear
+    cache = Herb.cache
+    count = cache.size
+    cache.clear!
+
+    unless silent
+      puts "Cleared #{count} cached entries"
+      puts "  Directory: #{cache.directory}"
+    end
+
     exit(0)
   end
 end

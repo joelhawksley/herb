@@ -23,6 +23,7 @@ require_relative "herb/ast/helpers"
 require_relative "herb/errors"
 require_relative "herb/warnings"
 
+require_relative "herb/cache"
 require_relative "herb/cli"
 require_relative "herb/project"
 require_relative "herb/configuration"
@@ -93,8 +94,17 @@ module Herb
       @configuration = Configuration.load(project_path)
     end
 
+    def cache
+      @cache ||= Cache.new
+    end
+
+    def reset_cache!
+      @cache = nil
+    end
+
     def reset_configuration!
       @configuration = nil
+      @cache = nil
     end
   end
 end

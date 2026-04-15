@@ -62,6 +62,24 @@ module Herb
       @config["engine"] || {}
     end
 
+    def cache
+      @config["cache"] || {}
+    end
+
+    def cache_enabled?
+      return true if ENV["HERB_CACHE"] == "1"
+
+      cache.fetch("enabled", false)
+    end
+
+    def cache_directory
+      dir = ENV["HERB_CACHE_DIR"] || cache.fetch("directory", "tmp/herb/cache")
+      return dir if Pathname.new(dir).absolute?
+
+      root = @project_root || @start_path
+      File.join(root.to_s, dir)
+    end
+
     def enabled_validators(overrides = {})
       config = dig("engine", "validators") || {}
 

@@ -20,6 +20,18 @@ module Herb
     attr_reader :src, :filename, :project_path, :relative_file_path, :bufvar, :debug, :content_for_head,
                 :validation_error_template, :visitors, :enabled_validators
 
+    # Returns a pre-compiled ISeq from the cache, or compiles one from @src.
+    # Use this to skip Ruby parsing when evaluating the template:
+    #   engine.iseq.eval instead of eval(engine.src)
+    def iseq
+      if @_cache_key
+        cached_iseq = Herb.cache.fetch_iseq(@_cache_key)
+        return cached_iseq if cached_iseq
+      end
+
+      RubyVM::InstructionSequence.compile(@src)
+    end
+
     ESCAPE_TABLE = {
       "&" => "&amp;",
       "<" => "&lt;",
@@ -96,6 +108,19 @@ module Herb
 
       preamble = "#{preamble}; " unless preamble.empty? || preamble.end_with?(";", " ", "\n")
 
+      # Cache lookup: skip parse/compile entirely on cache hit
+      if Herb.cache.enabled?
+        @_cache_key = Herb.cache.key_for(input, properties)
+        cached = Herb.cache.fetch(@_cache_key)
+
+        if cached
+          @src = cached
+          @src.freeze
+          freeze
+          return
+        end
+      end
+
       @src << "# frozen_string_literal: true\n" if @freeze
 
       if properties[:ensure]
@@ -158,6 +183,12 @@ module Herb
       end
 
       @src.freeze
+
+      # Store in cache for future hits
+      if @_cache_key
+        Herb.cache.store(@_cache_key, @src)
+      end
+
       freeze
     end
 

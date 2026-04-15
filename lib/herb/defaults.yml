@@ -16,6 +16,10 @@ files:
     - "tmp/**/*"
     - "vendor/**/*"
 
+cache:
+  enabled: false
+  directory: tmp/herb/cache
+
 engine:
   validators:
     security: true
