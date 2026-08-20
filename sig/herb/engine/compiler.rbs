@@ -5,25 +5,33 @@ module Herb
     class Compiler < ::Herb::Visitor
       EXPRESSION_TOKEN_TYPES: untyped
 
-      TRAILING_WHITESPACE: ::Regexp
+      ESCAPED_EXPRESSION_TOKEN_TYPES: untyped
 
-      TRAILING_INDENTATION: ::Regexp
+      CONTEXT_AWARE_CONTEXTS: untyped
 
-      TRAILING_INDENTATION_CAPTURE: ::Regexp
+      SCOPED_CONTEXT_ELEMENTS: untyped
 
-      WHITESPACE_ONLY: ::Regexp
+      BYTE_SPACE: ::Integer
 
-      WHITESPACE_ONLY_CAPTURE: ::Regexp
+      BYTE_TAB: ::Integer
 
-      RAW_TEXT_ELEMENTS: untyped
+      BYTE_NEWLINE: ::Integer
+
+      BYTE_CARRIAGE_RETURN: ::Integer
+
+      # Byte-indexed lookup tables. An array index beats a chain of `==` checks
+      # and keeps these predicates allocation-free in the hot text-scanning path.
+      HORIZONTAL_WHITESPACE_BYTE_VALUES: untyped
+
+      WHITESPACE_BYTE_VALUES: untyped
+
+      HORIZONTAL_WHITESPACE_BYTES: untyped
+
+      WHITESPACE_BYTES: untyped
 
       attr_reader tokens: untyped
 
       def initialize: (untyped engine, ?untyped options) -> untyped
-
-      def optimized_tokens: () -> untyped
-
-      def static_template_text: () -> untyped
 
       def generate_output: () -> untyped
 
@@ -63,8 +71,6 @@ module Herb
 
       def visit_xml_declaration_node: (untyped node) -> untyped
 
-      def visit_xml_processing_instruction_node: (untyped node) -> untyped
-
       def visit_cdata_node: (untyped node) -> untyped
 
       def visit_erb_content_node: (untyped node) -> untyped
@@ -103,10 +109,6 @@ module Herb
 
       def visit_erb_block_node: (untyped node) -> untyped
 
-      def visit_erb_iteration_block_node: (untyped node) -> untyped
-
-      def visit_erb_render_node: (untyped node) -> untyped
-
       def visit_erb_block_end_node: (untyped node, ?escaped: untyped) -> untyped
 
       def visit_erb_control_with_parts: (untyped node, *untyped parts) -> untyped
@@ -121,12 +123,19 @@ module Herb
 
       def pop_context: () -> untyped
 
-      # : (untyped node) { (String?) -> untyped } -> untyped
-      def with_element_context: (untyped node) { (String?) -> untyped } -> untyped
+      # : (untyped node) { () -> untyped } -> untyped
+      def with_element_context: (untyped node) { () -> untyped } -> untyped
 
       def process_erb_tag: (untyped node, ?skip_comment_check: untyped) -> untyped
 
       def add_text: (untyped text) -> untyped
+
+      def add_whitespace: (untyped whitespace) -> untyped
+
+      # Returns the byte length of a leading `[ \t]*\r?\n` run, or nil when the
+      # string does not start with a blank line. Byte scanning avoids building a
+      # MatchData and a copied String for every text token.
+      def leading_blank_line_length: (untyped text) -> untyped
 
       def add_code: (untyped code) -> untyped
 
@@ -135,6 +144,22 @@ module Herb
       def add_expression_escaped: (untyped code) -> untyped
 
       def optimize_tokens: (untyped tokens) -> untyped
+
+      def compact_whitespace_tokens: (untyped tokens) -> untyped
+
+      def adjacent_whitespace?: (untyped tokens, untyped index) -> untyped
+
+      def trailing_whitespace?: (untyped token) -> untyped
+
+      def leading_whitespace?: (untyped token) -> untyped
+
+      def whitespace_byte?: (untyped byte) -> untyped
+
+      def horizontal_whitespace_byte?: (untyped byte) -> untyped
+
+      def whitespace_before_code_sequence?: (untyped tokens, untyped current_index) -> untyped
+
+      def find_token_before_code_sequence: (untyped tokens, untyped whitespace_index) -> untyped
 
       def process_erb_output: (untyped node, untyped opening, untyped code) -> untyped
 
@@ -154,17 +179,17 @@ module Herb
 
       def right_trim?: (untyped node) -> untyped
 
-      def preceded_by_whitespace?: () -> untyped
-
-      def emits_nothing?: (untyped token) -> untyped
-
       def last_text_token: () -> untyped
+
+      # Byte offset where the string's trailing run of spaces/tabs begins, or nil
+      # when the string is empty or does not end in a space or tab. This replaces
+      # the TRAILING_INDENTATION / WHITESPACE_ONLY regex pair with a single scan
+      # that also tells us whether the run reaches the start of the string.
+      def trailing_horizontal_whitespace_start: (untyped text) -> untyped
 
       def extract_leading_space: () -> untyped
 
       def leading_space_follows_newline?: () -> untyped
-
-      def preceding_text_ends_with_newline?: () -> untyped
 
       def extract_and_remove_leading_space!: () -> untyped
 

@@ -32,7 +32,7 @@ module Herb
       def to_hash
         {
           type: type,
-          location: location&.to_hash,
+          location: location.to_hash,
           errors: errors.map(&:to_hash),
         }
       end
@@ -117,25 +117,28 @@ module Herb
 
       #: () -> Array[Herb::Errors::Error]
       def recursive_errors
-        accumulator = [] #: Array[Herb::Errors::Error]
-        collect_errors(accumulator)
-        accumulator
-      end
+        collected = [] #: Array[Herb::Errors::Error]
+        stack = [self] #: Array[Herb::AST::Node]
 
-      protected
+        until stack.empty?
+          node = stack.pop
+          node_errors = node.errors
 
-      #: (Array[Herb::Errors::Error] accumulator) -> void
-      def collect_errors(accumulator)
-        accumulator.concat(errors) unless errors.empty?
+          collected.concat(node_errors) unless node_errors.empty?
 
-        children = child_nodes
-        index = 0
-        count = children.size
+          children = node.child_nodes
 
-        while index < count
-          children[index]&.collect_errors(accumulator)
-          index += 1
+          index = children.length - 1
+
+          while index >= 0
+            child = children[index]
+            stack << child if child
+
+            index -= 1
+          end
         end
+
+        collected
       end
     end
   end

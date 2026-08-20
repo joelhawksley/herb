@@ -5,13 +5,22 @@ module Herb
     class Compiler < ::Herb::Visitor
       EXPRESSION_TOKEN_TYPES = [:expr, :expr_escaped, :expr_block, :expr_block_escaped].freeze
 
-      TRAILING_WHITESPACE = /[ \t]+\z/
-      TRAILING_INDENTATION = /\n[ \t]+\z/
-      TRAILING_INDENTATION_CAPTURE = /\n([ \t]+)\z/
-      WHITESPACE_ONLY = /\A[ \t]+\z/
-      WHITESPACE_ONLY_CAPTURE = /\A([ \t]+)\z/
+      ESCAPED_EXPRESSION_TOKEN_TYPES = [:expr_escaped, :expr_block_escaped].freeze
+      CONTEXT_AWARE_CONTEXTS = [:attribute_value, :script_content, :style_content].freeze
+      SCOPED_CONTEXT_ELEMENTS = ["script", "style"].freeze
 
-      RAW_TEXT_ELEMENTS = ["script", "style"].freeze
+      BYTE_SPACE = 32
+      BYTE_TAB = 9
+      BYTE_NEWLINE = 10
+      BYTE_CARRIAGE_RETURN = 13
+
+      # Byte-indexed lookup tables. An array index beats a chain of `==` checks
+      # and keeps these predicates allocation-free in the hot text-scanning path.
+      HORIZONTAL_WHITESPACE_BYTE_VALUES = [BYTE_SPACE, BYTE_TAB].freeze
+      WHITESPACE_BYTE_VALUES = [BYTE_SPACE, BYTE_TAB, BYTE_NEWLINE, 11, 12, BYTE_CARRIAGE_RETURN].freeze
+
+      HORIZONTAL_WHITESPACE_BYTES = Array.new(256) { |byte| HORIZONTAL_WHITESPACE_BYTE_VALUES.include?(byte) }.freeze
+      WHITESPACE_BYTES = Array.new(256) { |byte| WHITESPACE_BYTE_VALUES.include?(byte) }.freeze
 
       attr_reader :tokens
 
@@ -30,17 +39,9 @@ module Herb
         @current_element_source = nil
       end
 
-      def optimized_tokens
-        @optimized_tokens ||= optimize_tokens(@tokens)
-      end
-
-      def static_template_text
-        return unless optimized_tokens.all? { |token| token[0] == :text }
-
-        optimized_tokens.map { |token| token[1] }.join
-      end
-
       def generate_output
+        optimized_tokens = optimize_tokens(@tokens)
+
         optimized_tokens.each do |type, value, context, escaped|
           case type
           when :text
@@ -68,9 +69,11 @@ module Herb
       end
 
       def visit_html_element_node(node)
-        with_element_context(node) do |tag_name|
+        with_element_context(node) do
           visit(node.open_tag)
           visit_all(node.body)
+
+          tag_name = node.tag_name&.value&.downcase
 
           if node.open_tag.is_a?(Herb::AST::ERBOpenTagNode) && tag_name && node.close_tag
             if node.close_tag.is_a?(Herb::AST::ERBEndNode)
@@ -104,7 +107,7 @@ module Herb
       end
 
       def visit_html_attribute_node(node)
-        add_text(" ") unless preceded_by_whitespace?
+        add_whitespace(" ")
 
         visit(node.name)
 
@@ -165,6 +168,13 @@ module Herb
       end
 
       def visit_html_close_tag_node(node)
+        tag_name = node.tag_name&.value&.downcase
+
+        if @engine.content_for_head && tag_name == "head"
+          escaped_html = @engine.content_for_head.gsub("'", "\\\\'")
+          @tokens << [:expr, "'#{escaped_html}'.html_safe", current_context]
+        end
+
         add_text(node.tag_opening&.value)
         add_text(node.tag_name&.value)
         add_text(node.tag_closing&.value)
@@ -183,7 +193,7 @@ module Herb
       end
 
       def visit_whitespace_node(node)
-        add_text(node.value.value)
+        add_whitespace(node.value.value)
       end
 
       def visit_html_comment_node(node)
@@ -200,13 +210,6 @@ module Herb
 
       def visit_xml_declaration_node(node)
         add_text(node.tag_opening.value)
-        visit_all(node.children)
-        add_text(node.tag_closing.value)
-      end
-
-      def visit_xml_processing_instruction_node(node)
-        add_text(node.tag_opening.value)
-        add_text(node.target.value)
         visit_all(node.children)
         add_text(node.tag_closing.value)
       end
@@ -332,16 +335,6 @@ module Herb
         end
       end
 
-      def visit_erb_iteration_block_node(node)
-        visit_erb_block_node(node)
-      end
-
-      def visit_erb_render_node(node)
-        return process_erb_tag(node) unless node.end_node
-
-        visit_erb_block_node(node)
-      end
-
       def visit_erb_block_end_node(node, escaped: false)
         remove_trailing_whitespace_from_last_token! if left_trim?(node)
 
@@ -397,7 +390,7 @@ module Herb
         @context_stack.pop
       end
 
-      #: (untyped node) { (String?) -> untyped } -> untyped
+      #: (untyped node) { () -> untyped } -> untyped
       def with_element_context(node)
         tag_name = node.tag_name&.value&.downcase
         previous_element_source = @current_element_source
@@ -411,9 +404,9 @@ module Herb
           push_context(:style_content)
         end
 
-        yield(tag_name)
+        yield
 
-        pop_context if RAW_TEXT_ELEMENTS.include?(tag_name)
+        pop_context if SCOPED_CONTEXT_ELEMENTS.include?(tag_name)
 
         @element_stack.pop if tag_name
         @current_element_source = previous_element_source
@@ -450,8 +443,9 @@ module Herb
         return if text.empty?
 
         if @trim_next_whitespace
-          @last_trim_consumed_newline = text.match?(/\A[ \t]*\r?\n/)
-          text = text.sub(/\A[ \t]*\r?\n/, "")
+          trim_length = leading_blank_line_length(text)
+          @last_trim_consumed_newline = !trim_length.nil?
+          text = text.byteslice(trim_length, text.bytesize - trim_length) if trim_length
           @trim_next_whitespace = false
 
           restore_pending_leading_whitespace! unless @last_trim_consumed_newline
@@ -464,6 +458,36 @@ module Herb
         return if text.empty?
 
         @tokens << [:text, text, current_context]
+      end
+
+      def add_whitespace(whitespace)
+        @tokens << [:whitespace, whitespace, current_context]
+      end
+
+      # Returns the byte length of a leading `[ \t]*\r?\n` run, or nil when the
+      # string does not start with a blank line. Byte scanning avoids building a
+      # MatchData and a copied String for every text token.
+      def leading_blank_line_length(text)
+        index = 0
+        size = text.bytesize
+
+        while index < size
+          byte = text.getbyte(index)
+          break unless horizontal_whitespace_byte?(byte)
+
+          index += 1
+        end
+
+        return nil if index >= size
+
+        byte = text.getbyte(index)
+
+        if byte == BYTE_CARRIAGE_RETURN
+          index += 1
+          byte = index < size ? text.getbyte(index) : nil
+        end
+
+        byte == BYTE_NEWLINE ? index + 1 : nil
       end
 
       def add_code(code)
@@ -483,21 +507,20 @@ module Herb
       def optimize_tokens(tokens)
         return tokens if tokens.empty?
 
+        compacted = compact_whitespace_tokens(tokens)
+
         optimized = [] #: Array[untyped]
-        current_text = nil #: String?
+        current_text = nil
         current_context = nil
 
-        tokens.each do |token|
+        compacted.each do |token|
           type = token[0]
 
           if type == :text
-            value = token[1]
-
             if current_text
-              current_text << value
-              current_context ||= token[2]
+              current_text << token[1]
             else
-              current_text = value.dup
+              current_text = +"" << token[1]
               current_context = token[2]
             end
           else
@@ -508,13 +531,81 @@ module Herb
               current_context = nil
             end
 
-            optimized << [type, token[1], token[2], token[3]]
+            optimized << token
           end
         end
 
-        optimized << [:text, current_text, current_context] if current_text
+        optimized << [:text, current_text, current_context] if current_text && !current_text.empty?
 
         optimized
+      end
+
+      def compact_whitespace_tokens(tokens)
+        return tokens if tokens.empty?
+        return tokens unless tokens.any? { |token| token[0] == :whitespace }
+
+        compacted = [] #: Array[untyped]
+
+        tokens.each_with_index do |token, index|
+          if token[0] != :whitespace
+            compacted << token
+            next
+          end
+
+          next if adjacent_whitespace?(tokens, index)
+          next if whitespace_before_code_sequence?(tokens, index)
+
+          compacted << [:text, token[1], token[2]]
+        end
+
+        compacted
+      end
+
+      def adjacent_whitespace?(tokens, index)
+        prev_token = index.positive? ? tokens[index - 1] : nil
+        next_token = index < tokens.length - 1 ? tokens[index + 1] : nil
+
+        trailing_whitespace?(prev_token) || leading_whitespace?(next_token)
+      end
+
+      def trailing_whitespace?(token)
+        return false unless token
+
+        token[0] == :whitespace || (token[0] == :text && whitespace_byte?(token[1].getbyte(token[1].bytesize - 1)))
+      end
+
+      def leading_whitespace?(token)
+        token && token[0] == :text && whitespace_byte?(token[1].getbyte(0))
+      end
+
+      def whitespace_byte?(byte)
+        return false unless byte
+
+        WHITESPACE_BYTES[byte]
+      end
+
+      def horizontal_whitespace_byte?(byte)
+        HORIZONTAL_WHITESPACE_BYTES[byte]
+      end
+
+      def whitespace_before_code_sequence?(tokens, current_index)
+        previous_token = tokens[current_index - 1] if current_index.positive?
+
+        return false unless previous_token && previous_token[0] == :code
+
+        token_before_code = find_token_before_code_sequence(tokens, current_index)
+
+        return false unless token_before_code
+
+        trailing_whitespace?(token_before_code)
+      end
+
+      def find_token_before_code_sequence(tokens, whitespace_index)
+        search_index = whitespace_index - 1
+
+        search_index -= 1 while search_index >= 0 && tokens[search_index][0] == :code
+
+        search_index >= 0 ? tokens[search_index] : nil
       end
 
       def process_erb_output(node, opening, code)
@@ -531,13 +622,13 @@ module Herb
       end
 
       def indicator_for(type)
-        escaped = [:expr_escaped, :expr_block_escaped].include?(type)
+        escaped = ESCAPED_EXPRESSION_TOKEN_TYPES.include?(type)
 
         escaped ^ @escape ? "==" : "="
       end
 
       def context_aware_context?(context)
-        [:attribute_value, :script_content, :style_content].include?(context)
+        CONTEXT_AWARE_CONTEXTS.include?(context)
       end
 
       def should_escape_output?(opening)
@@ -560,7 +651,13 @@ module Herb
         last_value = @tokens.last[1]
 
         if last_type == :text
-          last_value.empty? || last_value.end_with?("\n") || (last_value.match?(WHITESPACE_ONLY) && preceding_token_ends_with_newline?) || last_value.match?(TRAILING_INDENTATION)
+          return true if last_value.empty? || last_value.end_with?("\n")
+
+          start = trailing_horizontal_whitespace_start(last_value)
+
+          return false unless start
+
+          start.zero? ? preceding_token_ends_with_newline? : last_value.getbyte(start - 1) == BYTE_NEWLINE
         elsif EXPRESSION_TOKEN_TYPES.include?(last_type)
           @last_trim_consumed_newline
         else
@@ -587,27 +684,29 @@ module Herb
         node.tag_closing&.value == "-%>"
       end
 
-      def preceded_by_whitespace?
-        index = @tokens.length - 1
-        index -= 1 while index >= 0 && emits_nothing?(@tokens[index])
-
-        return false if index.negative?
-
-        token = @tokens[index]
-
-        return false unless token[0] == :text
-
-        token[1].match?(/\s\z/)
-      end
-
-      def emits_nothing?(token)
-        token[0] == :code || (token[0] == :text && token[1].empty?)
-      end
-
       def last_text_token
         return unless @tokens.last && @tokens.last[0] == :text
 
         @tokens.last
+      end
+
+      # Byte offset where the string's trailing run of spaces/tabs begins, or nil
+      # when the string is empty or does not end in a space or tab. This replaces
+      # the TRAILING_INDENTATION / WHITESPACE_ONLY regex pair with a single scan
+      # that also tells us whether the run reaches the start of the string.
+      def trailing_horizontal_whitespace_start(text)
+        index = text.bytesize
+
+        return nil if index.zero?
+
+        while index.positive?
+          byte = text.getbyte(index - 1)
+          break unless horizontal_whitespace_byte?(byte)
+
+          index -= 1
+        end
+
+        index == text.bytesize ? nil : index
       end
 
       def extract_leading_space
@@ -615,10 +714,12 @@ module Herb
         return "" unless token
 
         text = token[1]
+        start = trailing_horizontal_whitespace_start(text)
 
-        return Regexp.last_match(1) if text =~ TRAILING_INDENTATION_CAPTURE || text =~ WHITESPACE_ONLY_CAPTURE
+        return "" unless start
+        return "" unless start.zero? || text.getbyte(start - 1) == BYTE_NEWLINE
 
-        ""
+        text.byteslice(start, text.bytesize - start)
       end
 
       def leading_space_follows_newline?
@@ -626,33 +727,33 @@ module Herb
         return false unless token
 
         text = token[1]
+        start = trailing_horizontal_whitespace_start(text)
 
-        return true if text.match?(TRAILING_INDENTATION)
+        return false unless start
+        return true if start.positive? && text.getbyte(start - 1) == BYTE_NEWLINE
 
-        text.match?(WHITESPACE_ONLY) && (preceding_text_ends_with_newline? || @last_trim_consumed_newline)
-      end
-
-      def preceding_text_ends_with_newline?
-        return false unless @tokens.length >= 2
-
-        preceding = @tokens[-2]
-
-        preceding[0] == :text && preceding[1].end_with?("\n")
+        start.zero? && @last_trim_consumed_newline
       end
 
       def extract_and_remove_leading_space!
-        leading_space = extract_leading_space
-        return leading_space if leading_space.empty?
+        token = last_text_token
+        return "" unless token
 
-        text = @tokens.last[1]
+        text = token[1]
+        start = trailing_horizontal_whitespace_start(text)
 
-        if text.match?(TRAILING_INDENTATION)
-          text.sub!(TRAILING_WHITESPACE, "")
-        elsif text.match?(WHITESPACE_ONLY)
+        return "" unless start
+        return "" unless start.zero? || text.getbyte(start - 1) == BYTE_NEWLINE
+
+        leading_space = text.byteslice(start, text.bytesize - start)
+
+        if start.zero?
           text.replace("")
+        else
+          text.replace(text.byteslice(0, start))
         end
 
-        @tokens.last[1] = text
+        token[1] = text
 
         leading_space
       end
@@ -691,13 +792,17 @@ module Herb
         return "" unless token
 
         text = token[1]
-        removed = text[TRAILING_WHITESPACE] || ""
+        start = trailing_horizontal_whitespace_start(text)
 
-        if text.match?(TRAILING_INDENTATION)
-          text.sub!(TRAILING_WHITESPACE, "")
-          token[1] = text
-        elsif text.match?(WHITESPACE_ONLY)
+        return "" unless start
+
+        removed = text.byteslice(start, text.bytesize - start)
+
+        if start.zero?
           text.replace("")
+          token[1] = text
+        elsif text.getbyte(start - 1) == BYTE_NEWLINE
+          text.replace(text.byteslice(0, start))
           token[1] = text
         end
 

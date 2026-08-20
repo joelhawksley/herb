@@ -4,25 +4,52 @@ module Herb
   class Engine
     attr_reader src: untyped
 
-    attr_reader context: untyped
+    attr_reader filename: untyped
+
+    attr_reader relative_file_path: untyped
 
     attr_reader bufvar: untyped
 
+    attr_reader debug: untyped
+
+    attr_reader content_for_head: untyped
+
+    attr_reader validation_error_template: untyped
+
     attr_reader visitors: untyped
 
-    # : () -> Pathname?
-    def filename: () -> Pathname?
+    attr_reader enabled_validators: untyped
 
+    # Resolved lazily: `Dir.pwd` allocates a String and a Pathname on every call
+    # and is only needed when a filename or a path-aware validator is in play.
     # : () -> Pathname
     def project_path: () -> Pathname
 
-    # : () -> String
-    def relative_file_path: () -> String
+    def self.optimize_warning_issued: () -> bool
 
-    # : (String) -> String
-    def string_literal: (String) -> String
+    def self.optimize_warning_issued=: (bool) -> bool
+
+    attr_accessor optimize_warning_issued: bool
 
     ESCAPE_TABLE: untyped
+
+    class CompilationError < StandardError
+    end
+
+    class GeneratorTemplateError < CompilationError
+    end
+
+    class InvalidRubyError < CompilationError
+      attr_reader compiled_source: untyped
+
+      def initialize: (untyped message, ?compiled_source: untyped) -> untyped
+    end
+
+    # `Dir.pwd` allocates a fresh String on every call and shows up in profiles
+    # when compiling many templates. The process working directory rarely
+    # changes, so memoize the derived Pathname and only rebuild it when it does.
+    # : () -> Pathname
+    def self.working_directory_path: () -> Pathname
 
     def initialize: (untyped input, ?untyped properties) -> untyped
 
@@ -40,8 +67,9 @@ module Herb
 
     def self.heredoc?: (untyped code) -> untyped
 
-    # : () -> untyped
-    def compiler_class: () -> untyped
+    def source_may_contain_action_view_helpers?: (untyped source) -> untyped
+
+    def self.action_view_helper_pattern: () -> untyped
 
     def add_text: (untyped text) -> untyped
 
@@ -77,36 +105,20 @@ module Herb
 
     private
 
-    # : (Hash[Symbol, untyped]) -> bool
-    def buffer_required?: (Hash[Symbol, untyped]) -> bool
-
-    # : (untyped) -> String?
-    def compile_static_body: (untyped) -> String?
-
-    # : () -> Array[Herb::Diagnostic]
-    def collected_diagnostics: () -> Array[Herb::Diagnostic]
-
-    # : (Hash[Symbol, untyped], String) -> void
-    def write_buffer_prelude: (Hash[Symbol, untyped], String) -> void
-
-    # : () -> void
-    def insert_herb_alias!: () -> void
+    def run_validation: (untyped ast) -> untyped
 
     def handle_parser_errors: (untyped parser_errors, untyped input, untyped _ast) -> untyped
 
-    # : (String) -> void
-    def report: (String) -> void
+    def handle_validation_errors: (untyped validators, untyped input) -> untyped
 
-    # : (Array[Herb::Diagnostic]) -> void
-    def emit_compile_diagnostics: (Array[Herb::Diagnostic]) -> void
+    def add_validation_overlay: (untyped validators, ?untyped input) -> untyped
 
-    # : (Array[Herb::Diagnostic], String) -> void
-    def raise_for: (Array[Herb::Diagnostic], String) -> void
+    def escape_attr: (untyped text) -> untyped
 
-    def context_options: (untyped properties) -> untyped
+    def add_parser_error_overlay: (untyped parser_errors, untyped input) -> untyped
 
-    # : () -> Hash[Symbol, untyped]
-    def parse_options: () -> Hash[Symbol, untyped]
+    # : () -> Array[Herb::Visitor]
+    def default_visitors: () -> Array[Herb::Visitor]
 
     # : () -> Hash[Symbol, untyped]
     def default_parser_options: () -> Hash[Symbol, untyped]
