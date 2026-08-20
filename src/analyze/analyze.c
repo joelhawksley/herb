@@ -1124,17 +1124,25 @@ void herb_analyze_parse_tree(
   herb_transform_conditional_elements(document, allocator);
   herb_transform_conditional_open_tags(document, allocator);
 
-  invalid_erb_context_T invalid_context = {
-    .loop_depth = 0,
-    .rescue_depth = 0,
-    .allocator = allocator,
-    .options = options,
-  };
+  if (options == NULL || options->diagnostics) {
+    invalid_erb_context_T invalid_context = {
+      .loop_depth = 0,
+      .rescue_depth = 0,
+      .allocator = allocator,
+      .options = options,
+    };
 
-  herb_visit_node((AST_NODE_T*) document, detect_invalid_erb_structures, &invalid_context);
 
-  herb_analyze_parse_errors(document, source, options, allocator);
+    herb_visit_node((AST_NODE_T*) document, detect_invalid_erb_structures, &invalid_context);
 
+    herb_analyze_parse_errors(document, source, options, allocator);
+  }
+
+  // Always run: this builds nested AST_HTML_ELEMENT_NODE_T structures from flat open/close
+  // tag sequences (and wraps JS tag bodies when action_view_helpers is set). Downstream
+  // consumers such as Herb::Engine::Compiler rely on this element structure to render
+  // nested HTML tags correctly, so it is NOT diagnostic-only and must not be skipped even
+  // when `diagnostics` is disabled via `analyze: :compile`.
   herb_parser_match_html_tags_post_analyze(document, options, allocator);
 
   hb_array_free(&context.ruby_context_stack);

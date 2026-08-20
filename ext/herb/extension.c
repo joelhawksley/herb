@@ -36,6 +36,30 @@ typedef struct {
   hb_allocator_T allocator;
 } buffer_args_T;
 
+// Applies the `analyze:` option to parser_options. Accepts `false`/`true` (analyze on/off) and
+// the `:compile` symbol, which keeps analyze enabled but skips the diagnostic-only passes
+// (herb_analyze_parse_errors and detect_invalid_erb_structures) that only populate
+// warnings/errors and are not required to produce a compilable AST.
+static void apply_analyze_option(VALUE options, parser_options_T* parser_options) {
+  VALUE analyze = rb_hash_lookup(options, rb_utf8_str_new_cstr("analyze"));
+  if (NIL_P(analyze)) { analyze = rb_hash_lookup(options, ID2SYM(rb_intern("analyze"))); }
+  if (NIL_P(analyze)) { return; }
+
+  if (SYMBOL_P(analyze)) {
+    ID analyze_id = SYM2ID(analyze);
+
+    if (analyze_id == rb_intern("compile")) {
+      parser_options->analyze = true;
+      parser_options->diagnostics = false;
+      return;
+    }
+
+    rb_raise(rb_eArgError, "invalid `analyze:` option: %" PRIsVALUE, rb_sym2str(analyze));
+  }
+
+  if (!RTEST(analyze)) { parser_options->analyze = false; }
+}
+
 static VALUE parse_convert_body(VALUE arg) {
   parse_args_T* args = (parse_args_T*) arg;
 
@@ -126,9 +150,8 @@ static VALUE Herb_parse(int argc, VALUE* argv, VALUE self) {
     if (NIL_P(track_locations)) { track_locations = rb_hash_lookup(options, ID2SYM(rb_intern("track_locations"))); }
     if (!NIL_P(track_locations) && !RTEST(track_locations)) { parser_options.track_locations = false; }
 
-    VALUE analyze = rb_hash_lookup(options, rb_utf8_str_new_cstr("analyze"));
-    if (NIL_P(analyze)) { analyze = rb_hash_lookup(options, ID2SYM(rb_intern("analyze"))); }
-    if (!NIL_P(analyze) && !RTEST(analyze)) { parser_options.analyze = false; }
+    apply_analyze_option(options, &parser_options);
+
 
     VALUE strict = rb_hash_lookup(options, rb_utf8_str_new_cstr("strict"));
     if (NIL_P(strict)) { strict = rb_hash_lookup(options, ID2SYM(rb_intern("strict"))); }
@@ -284,9 +307,7 @@ static VALUE Herb_arena_stats(int argc, VALUE* argv, VALUE self) {
     if (NIL_P(track_whitespace)) { track_whitespace = rb_hash_lookup(options, ID2SYM(rb_intern("track_whitespace"))); }
     if (!NIL_P(track_whitespace) && RTEST(track_whitespace)) { parser_options.track_whitespace = true; }
 
-    VALUE analyze = rb_hash_lookup(options, rb_utf8_str_new_cstr("analyze"));
-    if (NIL_P(analyze)) { analyze = rb_hash_lookup(options, ID2SYM(rb_intern("analyze"))); }
-    if (!NIL_P(analyze) && !RTEST(analyze)) { parser_options.analyze = false; }
+    apply_analyze_option(options, &parser_options);
 
     VALUE strict = rb_hash_lookup(options, rb_utf8_str_new_cstr("strict"));
     if (NIL_P(strict)) { strict = rb_hash_lookup(options, ID2SYM(rb_intern("strict"))); }

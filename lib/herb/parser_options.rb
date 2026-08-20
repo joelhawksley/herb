@@ -32,7 +32,7 @@ module Herb
     DEFAULT_TIMEOUT = 1 #: Numeric
     DEFAULT_MAX_ERRORS = 25 #: Integer
 
-    #: (?strict: bool, ?track_whitespace: bool, ?track_locations: bool, ?analyze: bool, ?action_view_helpers: bool, ?transform_conditionals: bool, ?render_nodes: bool, ?strict_locals: bool, ?iteration_nodes: bool, ?prism_nodes: bool, ?prism_nodes_deep: bool, ?prism_program: bool, ?timeout: Numeric) -> void
+    #: (?strict: bool, ?track_whitespace: bool, ?track_locations: bool, ?analyze: (bool | Symbol), ?action_view_helpers: bool, ?transform_conditionals: bool, ?render_nodes: bool, ?strict_locals: bool, ?iteration_nodes: bool, ?prism_nodes: bool, ?prism_nodes_deep: bool, ?prism_program: bool, ?timeout: Numeric) -> void
     def initialize(strict: DEFAULT_STRICT, track_whitespace: DEFAULT_TRACK_WHITESPACE, track_locations: DEFAULT_TRACK_LOCATIONS, analyze: DEFAULT_ANALYZE, action_view_helpers: DEFAULT_ACTION_VIEW_HELPERS, transform_conditionals: DEFAULT_TRANSFORM_CONDITIONALS, render_nodes: DEFAULT_RENDER_NODES, strict_locals: DEFAULT_STRICT_LOCALS, iteration_nodes: DEFAULT_ITERATION_NODES, prism_nodes: DEFAULT_PRISM_NODES, prism_nodes_deep: DEFAULT_PRISM_NODES_DEEP, prism_program: DEFAULT_PRISM_PROGRAM, timeout: DEFAULT_TIMEOUT, max_errors: DEFAULT_MAX_ERRORS)
       @strict = strict
       @track_whitespace = track_whitespace

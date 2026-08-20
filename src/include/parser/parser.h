@@ -22,6 +22,15 @@ typedef enum { PARSER_STATE_DATA, PARSER_STATE_FOREIGN_CONTENT } parser_state_T;
 typedef struct PARSER_OPTIONS_STRUCT {
   bool track_whitespace;
   bool analyze;
+  // When true (the default), herb_analyze_parse_tree also runs its diagnostic-only passes
+  // (herb_analyze_parse_errors and detect_invalid_erb_structures), which populate
+  // warnings/errors but are not required to produce a compilable AST. Set to false (e.g. via
+  // `analyze: :compile` in Ruby) to skip them when only the load-bearing `transform_erb_nodes`
+  // rewrite and HTML tag/element matching are needed, such as in Herb::Engine when validators
+  // that rely on this diagnostic data are disabled. Note: herb_parser_match_html_tags_post_analyze
+  // always runs regardless of this flag, since it builds the nested HTML element structure the
+  // compiler depends on and is not actually diagnostic-only. Has no effect when `analyze` is false.
+  bool diagnostics;
   bool strict;
   bool action_view_helpers;
   bool transform_conditionals;

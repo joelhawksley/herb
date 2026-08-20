@@ -36,6 +36,7 @@ static void parser_handle_whitespace_in_open_tag(parser_T* parser, hb_array_T* c
 
 const parser_options_T HERB_DEFAULT_PARSER_OPTIONS = { .track_whitespace = false,
                                                        .analyze = true,
+                                                       .diagnostics = true,
                                                        .strict = true,
                                                        .action_view_helpers = false,
                                                        .transform_conditionals = false,
