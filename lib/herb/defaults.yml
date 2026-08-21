@@ -32,3 +32,6 @@ formatter:
   indentWidth: 2
   indentStyle: space
   maxLineLength: 80
+
+rubocop:
+  enabled: false
